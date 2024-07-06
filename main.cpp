@@ -29,12 +29,14 @@ void toggle_do_execute_main_fcn();   // custom function which is getting execute
 float ir_sensor_compensation(float ir_distance_mV);
 
 // set up states for state machine
-    enum RobotState {
-        INITIAL,
-        EXECUTION,
-        SLEEP,
-        EMERGENCY
-    } robot_state = RobotState::INITIAL;
+enum RobotState {
+    INITIAL,
+    EXECUTION,
+    SLEEP,
+    EMERGENCY
+};
+RobotState robot_state = INITIAL;
+
 
 
 
@@ -42,10 +44,19 @@ float ir_sensor_compensation(float ir_distance_mV);
 int main()
 {
     
-
+//------------- Periferal section <--------------//
     // attach button fall function address to user button object, button has a pull-up resistor
     user_button.fall(&toggle_do_execute_main_fcn);
+    // led on nucleo board
+    DigitalOut user_led(USER_LED);
+    // additional led
+    // create DigitalOut object to command extra led, you need to add an aditional resistor, e.g. 220...500 Ohm
+    // a led has an anode (+) and a cathode (-), the cathode needs to be connected to ground via a resistor
+    DigitalOut led1(PB_9);
 
+//-----------> Periferal section Ends <------------------//
+
+//----------> Task Management section <------------------//
     // while loop gets executed every main_task_period_ms milliseconds, this is a
     // simple approach to repeatedly execute main
     const int main_task_period_ms = 1000; // define main task period time in ms e.g. 20 ms, there for
@@ -53,69 +64,42 @@ int main()
     Timer main_task_timer;              // create Timer object which we use to run the main task
                                         // every main_task_period_ms
 
-    //Creating servo object
-    Servo servo_D0(PB_D0);
-    Servo servo_D1(PB_D1);
+//-------------> Task Management Section Ends <------------------//
 
-    // create object to enable power electronics for the DC motors
+   
+// <----  Motors Section ---->
+ // create object to enable power electronics for the DC motors
     DigitalOut enable_motors(PB_ENABLE_DCMOTORS);
 
-//--- motor M1: Open-loop ---
-    // FastPWM pwm_M1(PB_PWM_M1); // create FastPWM object to command motor M1
-    // pwm_M1.write(0.75f); // apply 6V to the motor
-
-  //--- motor M2: Close-loop object declearions ---
-     const float voltage_max = 12.0f; // maximum voltage of battery packs, adjust this to
+    const float voltage_max = 12.0f; // maximum voltage of battery packs, adjust this to
     //                                 // 6.0f V if you only use one battery pack
-    // const float gear_ratio_M2 = 78.125f; // gear ratio
-    // const float kn_M2 = 180.0f / 12.0f;  //  [rpm/V]
+    const float gear_ratio = 100.0f; // gear ratio
+    const float kn = 180.0f / 12.0f;  //  [rpm/V]
+    
+// ---------- motor M1: closed loop for position control ------------
+    //const float gear_ratio_M1 = 100.0f; // gear ratio
+    //const float kn_M1 = 140.0f / 12.0f;  // motor constant [rpm/V]
     // it is assumed that only one motor is available, there fore
     // we use the pins from M1, so you can leave it connected to M1
-    // DCMotor motor_M2(PB_PWM_M1, PB_ENC_A_M1, PB_ENC_B_M1, gear_ratio_M2, kn_M2, voltage_max);
+    DCMotor motor_M1(PB_PWM_M1, PB_ENC_A_M1, PB_ENC_B_M1, gear_ratio, kn, voltage_max);
     // enable the motion planner for smooth movement
-    
+    motor_M1.enableMotionPlanner(true);
     // limit max. velocity to half physical possible velocity
-    //  motor_M2.setMaxVelocity(motor_M2.getMaxPhysicalVelocity() * 0.5f);
-    //  motor_M2.enableMotionPlanner(true);
+    motor_M1.setMaxVelocity(motor_M1.getMaxPhysicalVelocity() * 0.5f);
+    
+//--- motor M2: Close-loop object declearions ---
+     // Create and initialize motor object
+    DCMotor motor_M2(PB_PWM_M2, PB_ENC_A_M2, PB_ENC_B_M2, gear_ratio, kn, voltage_max);
+    // enable the motion planner for smooth movement
+    motor_M2.enableMotionPlanner(true);
+    motor_M2.setMaxVelocity(motor_M2.getMaxPhysicalVelocity() * 0.5f);
     //  // limit max. acceleration to half of the default acceleration
     // motor_M2.setMaxAcceleration(motor_M2.getMaxAcceleration() * 0.5f);
 
-// ---------- motor M3: closed loop for position control ------------
-    const float gear_ratio_M3 = 100.0f; // gear ratio
-    const float kn_M3 = 140.0f / 12.0f;  // motor constant [rpm/V]
-    // it is assumed that only one motor is available, there fore
-    // we use the pins from M1, so you can leave it connected to M1
-    DCMotor motor_M3(PB_PWM_M1, PB_ENC_A_M1, PB_ENC_B_M1, gear_ratio_M3, kn_M3, voltage_max);
-    // enable the motion planner for smooth movement
-    motor_M3.enableMotionPlanner(true);
-    // limit max. velocity to half physical possible velocity
-    motor_M3.setMaxVelocity(motor_M3.getMaxPhysicalVelocity() * 0.5f);
+//----------> Motors Object Ends <---------------//
 
     
-
-    // minimal pulse width and maximal pulse width obtained from the servo calibration process
-    // Reely S-0090 (Calibrated by me)
-    float servo_D0_ang_min = 0.035f; // carefull, these values might differ from servo to servo
-    float servo_D0_ang_max = 0.12f;
-    // reely S0090 (Not calibrated)
-    float servo_D1_ang_min = 0.0325f;
-    float servo_D1_ang_max = 0.1175f;
-
-    // servo.setNormalisedPulseWidth: before calibration (0,1) -> (min pwm, max pwm)
-    // servo.setNormalisedPulseWidth: after calibration (0,1) -> (servo_D0_ang_min, servo_D0_ang_max)
-    servo_D0.calibratePulseMinMax(servo_D0_ang_min, servo_D0_ang_max);
-    servo_D1.calibratePulseMinMax(servo_D1_ang_min, servo_D1_ang_max);
-
-    // mechanical button
-    DigitalIn mechanical_button(PC_5); // create DigitalIn object to evaluate mechanical button, you
-                                    // need to specify the mode for proper usage, see below
-    mechanical_button.mode(PullUp);    // sets pullup between pin and 3.3 V, so that there
-                                   // is a defined potential
-
-    // led on nucleo board
-    DigitalOut user_led(USER_LED);
-
-
+//----------> Infrared Sensor (ir) Section <------------------//
     // ir distance sensor (we are using this inplace of Ultrasonic sensor)
     float ir_distance_mV = 0.0f; // define a variable to store measurement (in mV)
     float ir_distances_cm = 0.0f;
@@ -127,18 +111,35 @@ int main()
     float ir_distance_min = 4.0f;
     float ir_distance_max = 40.0f;
 
+//-----------> IR Sensor Definition Ends <-----------------//
+   
+   
+// --> Servor section <-----------//
+    // minimal pulse width and maximal pulse width obtained from the servo calibration process
+    // Reely S-0090 (Calibrated by me)
+
+     //Creating servo object
+    Servo servo_D0(PB_D0);
+    // Servo servo_D1(PB_D1);
+    float servo_D0_ang_min = 0.035f; // carefull, these values might differ from servo to servo
+    float servo_D0_ang_max = 0.12f;
+
+    // servo.setNormalisedPulseWidth: before calibration (0,1) -> (min pwm, max pwm)
+    // servo.setNormalisedPulseWidth: after calibration (0,1) -> (servo_D0_ang_min, servo_D0_ang_max)
+    servo_D0.calibratePulseMinMax(servo_D0_ang_min, servo_D0_ang_max);
+    // servo_D1.calibratePulseMinMax(servo_D1_ang_min, servo_D1_ang_max);
+
     // initialize servo with the input value
     float servo_input = 0.0f;
     int servo_counter = 0; // define servo counter, this is an additional variable
                        // used to command the servo
+     
+    //--- Calculate frequency of the task, I used it for servo operations: How many loops occures in one second 
     const int loops_per_seconds = static_cast<int>(ceilf(1.0f / (0.001f * static_cast<float>(main_task_period_ms))));
 
-    // additional led
-    // create DigitalOut object to command extra led, you need to add an aditional resistor, e.g. 220...500 Ohm
-    // a led has an anode (+) and a cathode (-), the cathode needs to be connected to ground via a resistor
-    DigitalOut led1(PB_9);
+// -----------> Servo Ends <----------------//
 
-    // start timer
+//-----------> start timer
     main_task_timer.start();
     
 
@@ -149,8 +150,8 @@ int main()
         // printf("IR distance mV: %f \n", ir_distance_mV);
         // printf("IR distance mV: %f IR distance cm: %f \n", ir_distance_mV, ir_distance_cm);
         // printf("Pulse width: %f \n", servo_input);
-        // printf("Motor velocity: %f \n", motor_M2.getVelocity());
-        printf("Motor position: %f \n", motor_M3.getRotation());
+        printf("Motor velocity: %f \n", motor_M2.getVelocity());
+        printf("Motor position: %f \n", motor_M1.getRotation());
 
        
 
@@ -168,8 +169,8 @@ int main()
             enable_motors = 1; // setting this once would actually be enough
 
             // Test that the default motor driver does not activate the motion planner
-            // motor_M2.setVelocity(motor_M2.getMaxVelocity() * 0.8f); // set speed setpoint to half physical possible velocity
-            motor_M3.setRotation(3.0f);
+             motor_M2.setVelocity(motor_M2.getMaxVelocity() * 0.2f); // set speed setpoint to half physical possible velocity
+            motor_M1.setRotation(3.0f);
 
             // read us sensor distance, only valid measurements will update us_distance_cm
            
@@ -189,24 +190,25 @@ int main()
 
             //<------- state machine ------>
             switch (robot_state) {
-                case RobotState::INITIAL:
+                case INITIAL:
                     printf("INITIAL\n");
                      // enable the servo
                     if (!servo_D0.isEnabled())
                         servo_D0.enable();
-                    robot_state = RobotState::EXECUTION;
+                    robot_state = EXECUTION;
 
                     break;
-                case RobotState::EXECUTION:
+                case EXECUTION:
                     printf("EXECUTION\n");
                     // function to map the distance to the servo movement (us_distance_min, us_distance_max) -> (0.0f, 1.0f)
                     servo_input = (ir_distance_cm - ir_distance_min) / (ir_distance_max - ir_distance_min);
                     // values smaller than 0.0f or bigger than 1.0f ar constrained to the range (0.0f, 1.0f) in setNormalisedPulseWidth
                     servo_D0.setNormalisedPulseWidth(servo_input);
+                    motor_M2.setRotationRelative(3.0f);
 
-                     // if the mechanical button is pressed go to EMERGENCY
-                    if (mechanical_button.read()) {
-                        robot_state = RobotState::EMERGENCY;
+                     // if the blue button is pressed again, go to EMERGENCY
+                    if (!do_execute_main_task) { //--> test...
+                        robot_state = EMERGENCY;
                     }
 
                     break;
@@ -215,13 +217,13 @@ int main()
                     printf("SLEEP\n");
                     // if the measurement is within the min and max limits go to EXECUTION
                     if ((ir_distance_cm  > ir_distance_min) && (ir_distance_cm < ir_distance_max)) {
-                        robot_state = RobotState::EXECUTION;
+                        robot_state = EXECUTION;
                     }
 
 
                     break;
 
-                case RobotState::EMERGENCY:
+                case EMERGENCY:
                     printf("EMERGENCY\n");
                     // the transition to the emergency state causes the execution of the commands contained
                     // in the outer else statement scope, and since do_reset_all_once is true the system undergoes a reset
@@ -250,13 +252,13 @@ int main()
                 // IR sensor reset
                 ir_distance_mV = 0.0f;
                 ir_distances_cm = 0.0f;
-                robot_state = RobotState::INITIAL;
+                robot_state =INITIAL;
                 // motor_M2.setVelocity(motor_M2.getMaxVelocity() * 0.2f);
 
 
                 // Servo reset
                 servo_D0.disable();
-                servo_D1.disable();
+                // servo_D1.disable();
                 servo_input = 0.0f;
             }
         }
@@ -279,6 +281,8 @@ void toggle_do_execute_main_fcn()
         do_reset_all_once = true;
 }
 
+
+// <----------------- Robot functions ------------------->
 float ir_sensor_compensation(float ir_distance_mV)
 {
     // insert values that you got from the MATLAB file
