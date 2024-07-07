@@ -28,14 +28,30 @@ void toggle_do_execute_main_fcn();   // custom function which is getting execute
 // function declaration, definition at the end
 float ir_sensor_compensation(float ir_distance_mV);
 
+int turn_90_degs( DCMotor* motor_M1, DCMotor* motor_M2, float revolutions);
+int accelerate_linear();
+void drop_bridge();
+int cross_bridge();
+void pickup_bridge();
+
+float calculateRevolutions(float wheelDiameter, float wheelbase) ;
+
 // set up states for state machine
 enum RobotState {
-    INITIAL,
-    EXECUTION,
-    SLEEP,
+    START,
+    TURN_90_DEG,
+    ACCELARATE,
+    DROP_BRIDGE,
+    CROSS_BRIDGE,
+    PICKUP_BRIDGE,
     EMERGENCY
 };
-RobotState robot_state = INITIAL;
+RobotState robot_state = START;
+
+//---> variable ----->
+float turning_position = 10.0f; //  rotate the wheel 5 times befor making 90 degree turn
+//float current_position = 0.0;
+float revolutions = 0.0f;
 
 
 
@@ -75,6 +91,8 @@ int main()
     //                                 // 6.0f V if you only use one battery pack
     const float gear_ratio = 100.0f; // gear ratio
     const float kn = 180.0f / 12.0f;  //  [rpm/V]
+    const float wheelDiameter =  64.0;        // [mm]
+    const float wheelbase = 160;       // distance between the center of the two driving wheels (tires) [mm]
     
 // ---------- motor M1: closed loop for position control ------------
     //const float gear_ratio_M1 = 100.0f; // gear ratio
@@ -150,7 +168,7 @@ int main()
         // printf("IR distance mV: %f \n", ir_distance_mV);
         // printf("IR distance mV: %f IR distance cm: %f \n", ir_distance_mV, ir_distance_cm);
         // printf("Pulse width: %f \n", servo_input);
-        printf("Motor velocity: %f \n", motor_M2.getVelocity());
+        printf("Motor velocity: %f \n", motor_M2.getRotation());
         printf("Motor position: %f \n", motor_M1.getRotation());
 
        
@@ -169,8 +187,8 @@ int main()
             enable_motors = 1; // setting this once would actually be enough
 
             // Test that the default motor driver does not activate the motion planner
-             motor_M2.setVelocity(motor_M2.getMaxVelocity() * 0.2f); // set speed setpoint to half physical possible velocity
-            motor_M1.setRotation(3.0f);
+            // motor_M2.setVelocity(motor_M2.getMaxVelocity() * 0.2f); // set speed setpoint to half physical possible velocity
+           // motor_M1.setRotation(3.0f);
 
             // read us sensor distance, only valid measurements will update us_distance_cm
            
@@ -189,38 +207,79 @@ int main()
             // servo_D1.setNormalisedPulseWidth(servo_input);
 
             //<------- state machine ------>
+            int turned_90_deg = 0;
             switch (robot_state) {
-                case INITIAL:
+                case START:
                     printf("INITIAL\n");
                      // enable the servo
-                    if (!servo_D0.isEnabled())
-                        servo_D0.enable();
-                    robot_state = EXECUTION;
-
+                    // if (!servo_D0.isEnabled())
+                    //     servo_D0.enable();
+                    motor_M1.setMaxVelocity(motor_M1.getMaxPhysicalVelocity()*0.5);
+                    motor_M2.setMaxVelocity(motor_M2.getMaxPhysicalVelocity()*0.5);
+                
+                    motor_M1.setRotation(turning_position);
+                    motor_M2.setRotation(turning_position);
+                    if(((motor_M1.getRotation()+0.001f)>=turning_position) && ((motor_M2.getRotation()+0.001f)>=turning_position)){
+                        robot_state = TURN_90_DEG;
+                    }
+                     
+                    
                     break;
-                case EXECUTION:
-                    printf("EXECUTION\n");
-                    // function to map the distance to the servo movement (us_distance_min, us_distance_max) -> (0.0f, 1.0f)
+
+                case TURN_90_DEG:
+                    printf("Turning 90 degrees\n");
+                    //function to map the distance to the servo movement (us_distance_min, us_distance_max) -> (0.0f, 1.0f)
                     servo_input = (ir_distance_cm - ir_distance_min) / (ir_distance_max - ir_distance_min);
-                    // values smaller than 0.0f or bigger than 1.0f ar constrained to the range (0.0f, 1.0f) in setNormalisedPulseWidth
-                    servo_D0.setNormalisedPulseWidth(servo_input);
-                    motor_M2.setRotationRelative(3.0f);
+                   // values smaller than 0.0f or bigger than 1.0f ar constrained to the range (0.0f, 1.0f) in setNormalisedPulseWidth
+                    //servo_D0.setNormalisedPulseWidth(servo_input);
+                   // motor_M2.setRotationRelative(3.0f);
+                    //current_position = motor_M1.getRotation();
+                    revolutions = calculateRevolutions(wheelDiameter, wheelbase);
+                    printf("Revolutions needed for a 90-degree turn: %f\n", revolutions);
+
+                    turned_90_deg = turn_90_degs(&motor_M1, &motor_M2, revolutions);
+                    printf("turned 90 degs: %d\n", turned_90_deg);
 
                      // if the blue button is pressed again, go to EMERGENCY
-                    if (!do_execute_main_task) { //--> test...
-                        robot_state = EMERGENCY;
+                    if (turned_90_deg) { //--> test...
+                        robot_state = ACCELARATE;;
                     }
-
+                    
                     break;
 
-                case RobotState::SLEEP:
+                case ACCELARATE:
+                    printf("SLEEP\n");
+                    // if the measurement is within the min and max limits go to EXECUTION
+                    if(turned_90_deg){ // change this
+                        if ((ir_distance_cm  > ir_distance_min) && (ir_distance_cm < ir_distance_max)) {
+                        robot_state = DROP_BRIDGE;
+                        }
+                    }
+                    
+                    break;
+
+                case DROP_BRIDGE:
                     printf("SLEEP\n");
                     // if the measurement is within the min and max limits go to EXECUTION
                     if ((ir_distance_cm  > ir_distance_min) && (ir_distance_cm < ir_distance_max)) {
-                        robot_state = EXECUTION;
+                        robot_state = CROSS_BRIDGE;
                     }
+                    break;
 
-
+                case CROSS_BRIDGE:
+                    printf("SLEEP\n");
+                    // if the measurement is within the min and max limits go to EXECUTION
+                    if ((ir_distance_cm  > ir_distance_min) && (ir_distance_cm < ir_distance_max)) {
+                        robot_state = PICKUP_BRIDGE;
+                    }
+                    break;
+                
+                 case PICKUP_BRIDGE:
+                    printf("SLEEP\n");
+                    // if the measurement is within the min and max limits go to EXECUTION
+                    if ((ir_distance_cm  > ir_distance_min) && (ir_distance_cm < ir_distance_max)) {
+                        robot_state = EMERGENCY;
+                    }
                     break;
 
                 case EMERGENCY:
@@ -228,8 +287,8 @@ int main()
                     // the transition to the emergency state causes the execution of the commands contained
                     // in the outer else statement scope, and since do_reset_all_once is true the system undergoes a reset
                     toggle_do_execute_main_fcn();
-
                     break;
+                    
                 default:
                     break;
             }
@@ -252,9 +311,8 @@ int main()
                 // IR sensor reset
                 ir_distance_mV = 0.0f;
                 ir_distances_cm = 0.0f;
-                robot_state =INITIAL;
+                robot_state =START;
                 // motor_M2.setVelocity(motor_M2.getMaxVelocity() * 0.2f);
-
 
                 // Servo reset
                 servo_D0.disable();
@@ -279,10 +337,12 @@ void toggle_do_execute_main_fcn()
     // set do_reset_all_once to true if do_execute_main_task changed from false to true
     if (do_execute_main_task)
         do_reset_all_once = true;
-}
+};
 
 
 // <----------------- Robot functions ------------------->
+
+// ---> IR sensor
 float ir_sensor_compensation(float ir_distance_mV)
 {
     // insert values that you got from the MATLAB file
@@ -294,4 +354,71 @@ float ir_sensor_compensation(float ir_distance_mV)
         ir_distance_mV -= 0.001f;
 
     return a / (ir_distance_mV + b);
+};
+
+//---> 90 degrees turn function
+int turn_90_degs( DCMotor* motor_M1, DCMotor* motor_M2, float revolutions){
+    float threshold = 0.001f;
+            
+        // turn 90 degrees by moving one motor forward while moving the second backwards using relative funtion
+        motor_M2->setRotationRelative(revolutions);
+        motor_M1->setRotationRelative(-revolutions);
+        // check if 90 degree have been done while incrimenting the revolution of the motor, if done return 1
+        if ((2*motor_M2->getRotation()+threshold)>=(fabs(motor_M2->getRotation()-motor_M1->getRotation()))){
+
+            return 1;
+        }
+
+    
+
+    return 0;
+
+};
+
+//---> constant velocity to the trench edge function
+int accelerate_linear(){
+
+    return 0;
+
+};
+
+//---> drop bridge funtion
+void drop_bridge(){
+
+    ;
+
+};
+
+//---> retract fulk arm and cross the bridge function
+int cross_bridge(){
+
+    return 0;
+
+};
+
+//---> pickup the bridge
+void pickup_bridge(){
+
+    ;
+
+};
+
+// ---- Other Maths functions-----------//
+float calculateRevolutions(float wheelDiameter, float wheelbase) {
+    // Calculate the turning radius
+    float turningRadius = wheelbase / 2.0;
+
+    // Calculate the circumference of the turning circle
+    float turningCircumference = 2.0 * M_PI * turningRadius;
+
+    // Calculate the distance each wheel needs to travel for a 90-degree turn
+    float distancePerWheel = turningCircumference / 4.0;
+
+    // Calculate the circumference of the wheel
+    float wheelCircumference = M_PI * wheelDiameter;
+
+    // Calculate the number of revolutions needed
+    float revolutions = distancePerWheel / wheelCircumference;
+
+    return revolutions;
 }
