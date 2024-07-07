@@ -29,7 +29,7 @@ void toggle_do_execute_main_fcn();   // custom function which is getting execute
 float ir_sensor_compensation(float ir_distance_mV);
 
 int turn_90_degs( DCMotor* motor_M1, DCMotor* motor_M2, float revolutions);
-int accelerate_linear();
+void accelerate_linear(DCMotor* motor_M1, DCMotor* motor_M2, float forward_short);
 void drop_bridge();
 int cross_bridge();
 void pickup_bridge();
@@ -49,8 +49,9 @@ enum RobotState {
 RobotState robot_state = START;
 
 //---> variable ----->
-float turning_position = 10.0f; //  rotate the wheel 5 times befor making 90 degree turn
-//float current_position = 0.0;
+float turning_position = 5.0f; //  rotate the wheel 5 times befor making 90 degree turn
+float reverse_short = -0.5f;    // short revers when bridge is detected
+float forward_short = 0.5f;     // continousely increase until edge dictected
 float revolutions = 0.0f;
 
 
@@ -127,7 +128,7 @@ int main()
 
     // min and max IR sensor reading, (ir_distance_min, ir_distance_max) -> (servo_min, servo_max)
     float ir_distance_min = 4.0f;
-    float ir_distance_max = 40.0f;
+    float ir_distance_max = 30.0f;
 
 //-----------> IR Sensor Definition Ends <-----------------//
    
@@ -179,7 +180,7 @@ int main()
             led1 = 1;
             
 
-            // read analog input
+            // read analog input (IR sensor to detect edge)
             ir_distance_mV = 1.0e3f * ir_analog_in.read() * 3.3f;
             ir_distances_cm = ir_sensor_compensation(ir_distance_mV);
 
@@ -248,13 +249,22 @@ int main()
                     break;
 
                 case ACCELARATE:
-                    printf("SLEEP\n");
-                    // if the measurement is within the min and max limits go to EXECUTION
-                    if(turned_90_deg){ // change this
-                        if ((ir_distance_cm  > ir_distance_min) && (ir_distance_cm < ir_distance_max)) {
-                        robot_state = DROP_BRIDGE;
+                    printf("Accilarating..\n");
+                    // if the measurement is within the max limits go to EXECUTION
+                    
+                        if (ir_distance_cm < ir_distance_max) {
+                            // keep accelerating with constant low 
+                            accelerate_linear(&motor_M1, &motor_M2, forward_short);
+
                         }
-                    }
+                        else {
+                            //reverse a litle
+                            motor_M1.setRotationRelative(reverse_short);
+                            motor_M2.setRotationRelative(reverse_short);
+
+                            robot_state = DROP_BRIDGE;
+                        }
+                    
                     
                     break;
 
@@ -376,9 +386,11 @@ int turn_90_degs( DCMotor* motor_M1, DCMotor* motor_M2, float revolutions){
 };
 
 //---> constant velocity to the trench edge function
-int accelerate_linear(){
-
-    return 0;
+void accelerate_linear(DCMotor* motor_M1, DCMotor* motor_M2, float forward_short){
+        motor_M2->setMaxVelocity(motor_M2->getMaxPhysicalVelocity()*0.2);
+        motor_M1->setMaxVelocity(motor_M1->getMaxPhysicalVelocity()*0.2);
+        motor_M2->setRotation(motor_M2->getRotation()+1.0f);
+        motor_M1->setRotation(motor_M1->getRotation()+1.0f);
 
 };
 
