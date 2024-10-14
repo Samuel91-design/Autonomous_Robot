@@ -29,7 +29,7 @@ void toggle_do_execute_main_fcn();   // custom function which is getting execute
 // function declaration, definition at the end
 float ir_sensor_compensation(float ir_distance_mV);
 
-int turn_90_degs( DCMotor* motor_M1, DCMotor* motor_M2, float revolutions);
+void turn_90_degs( DCMotor* motor_M1, DCMotor* motor_M2, float revolutions);
 void accelerate_linear(DCMotor* motor_M1, DCMotor* motor_M2, float forward_short, float speed);
 void drop_bridge();
 void reverse_func(DCMotor* motor_M1, DCMotor* motor_M2, float revolution_per_task);
@@ -51,14 +51,15 @@ RobotState robot_state = START;
 
 //---> variable ----->
 float turning_position = 3.0f; //  rotate the wheel 5 times befor making 90 degree turn
-float reverse_short = -0.4f;    // short revers when bridge is detected
+float reverse_short = 0.1f;    // short revers when bridge is detected
+float retract_arm = 1.0f;
 float forward_short = 0.6f;     // continousely increase until edge dictected
 float revolutions = 0.0f;
 float cruse_speed = 0.15f;
-float servo_rate = 0.01f;
+float servo_rate = 0.03f;
 float servo_Max = 0.9f;
 float servo_Min = 0.09f;
-
+float bridge_length = 3.0f;
 
 
 
@@ -81,7 +82,7 @@ int main()
 //----------> Task Management section <------------------//
     // while loop gets executed every main_task_period_ms milliseconds, this is a
     // simple approach to repeatedly execute main
-    const int main_task_period_ms = 1000; // define main task period time in ms e.g. 20 ms, there for
+    const int main_task_period_ms = 100; // define main task period time in ms e.g. 20 ms, there for
                                         // the main task will run 50 times per second
     Timer main_task_timer;              // create Timer object which we use to run the main task
                                         // every main_task_period_ms
@@ -97,8 +98,8 @@ int main()
     //                                 // 6.0f V if you only use one battery pack
     const float gear_ratio = 100.0f; // gear ratio
     const float kn = 180.0f / 12.0f;  //  [rpm/V]
-    const float wheelDiameter =  64.0;        // [mm]
-    const float wheelbase = 160;       // distance between the center of the two driving wheels (tires) [mm]
+    const float wheelDiameter =  64.0;        // [64mm]
+    const float wheelbase = 160;       // distance between the center of the two driving wheels (tires) [160mm]
     
 // ---------- motor M1: closed loop for position control ------------
     //const float gear_ratio_M1 = 100.0f; // gear ratio
@@ -169,10 +170,13 @@ int main()
 // -----------> Servo Ends <----------------//
 
 //-----------> start timer
+    float check_M1 =0.0f;
+    float check_M2 = 0.0f;
     main_task_timer.start();
     
 
     // this loop will run forever
+   
     while (true) {
         main_task_timer.reset();
         // print to the serial terminal
@@ -219,11 +223,13 @@ int main()
             // servo_D1.setNormalisedPulseWidth(servo_input);
 
             //<------- state machine ------>
-            int turned_90_deg = 0;
-             float servo_counts = 2.001f;
+            //int turned_90_deg = 0;
+            float servo_counts = 2.001f;
             
+            
+            const float global_threshold =0.2f;
             switch (robot_state) {
-                case START:
+                case START: {
                     printf("INITIAL\n");
                      // set start vrlocity
                     motor_M1.setMaxVelocity(motor_M1.getMaxPhysicalVelocity()*0.3);
@@ -232,59 +238,64 @@ int main()
                     motor_M1.setRotation(turning_position);
                     motor_M2.setRotation(turning_position);
                     if(((motor_M1.getRotation()+0.001f)>=turning_position) && ((motor_M2.getRotation()+0.001f)>=turning_position)){
+                        check_M1 = motor_M1.getRotation();
+                        check_M2 = motor_M2.getRotation();
+                        printf("checking2_before.. %f\n", check_M2);
                         robot_state = TURN_90_DEG;
                     }
                      
                     
                     break;
+                }
 
-                case TURN_90_DEG:
+                case TURN_90_DEG: {
                     printf("Turning 90 degrees\n");
-                    //function to map the distance to the servo movement (us_distance_min, us_distance_max) -> (0.0f, 1.0f)
-                    // enable the servo
-                    // if (!servo_D0.isEnabled())
-                    //     servo_D0.enable();
-                   // values smaller than 0.0f or bigger than 1.0f ar constrained to the range (0.0f, 1.0f) in setNormalisedPulseWidth
-                    //servo_D0.setNormalisedPulseWidth(servo_input);
-                   // motor_M2.setRotationRelative(3.0f);
                    
                     //calculate value for 90 degrees revolution
                     revolutions = calculateRevolutions(wheelDiameter, wheelbase, 90.0);
-                    printf("Revolutions needed for a 90-degree turn: %f\n", revolutions);
+                   // printf("Revolutions needed for a 90-degree turn: %f\n", revolutions);
 
-                    turned_90_deg = turn_90_degs(&motor_M1, &motor_M2, revolutions);
-                    printf("turned 90 degs: %d\n", turned_90_deg);
+                    turn_90_degs(&motor_M1, &motor_M2, revolutions);
+                  
+                    printf("checking2.. %f\n", check_M2);
+                    if ((fabsf(motor_M2.getRotation()-(check_M2+revolutions))<global_threshold) && (fabsf(motor_M1.getRotation()-(check_M1-revolutions))< global_threshold)) {
 
                      // if the blue button is pressed again, go to EMERGENCY
-                    if (turned_90_deg) { //--> test...
+                    //if (turned_90_deg) { //--> test...
                         robot_state = ACCELARATE;
                     }
                     
                     break;
+                }
 
-                case ACCELARATE:
-                    printf("Accilarating..\n");
-                    // if the measurement is within the max limits go to EXECUTION
-                   
-                    printf("thench threshold: %f\n", thrench_threshold);
+                case ACCELARATE:{
+                    
 
-                    if (thrench_threshold < 1.0) {
-                        // keep accelerating with constant low 
                         
-                        accelerate_linear(&motor_M1, &motor_M2, forward_short, cruse_speed);
+                        // if the measurement is within the max limits go to EXECUTION
+                    
+                        printf("thench threshold: %f\n", thrench_threshold);
 
-                    }
-                    else {
-                        //reverse a litle to compasate for trench detection delay
-                        reverse_func(&motor_M1, &motor_M2, reverse_short);
-                        robot_state = DROP_BRIDGE;
-                                                                            
-                    }
+                        if (thrench_threshold < 1.0) {
+                            // keep accelerating with constant low 
+                            
+                            accelerate_linear(&motor_M1, &motor_M2, forward_short, cruse_speed);
+
+                        }
+                        else {
+                            //reverse a litle to compasate for trench detection delay
+                            reverse_func(&motor_M1, &motor_M2, reverse_short);
+                            robot_state = DROP_BRIDGE;
+                                                                                
+                          }
                     
                     
-                    break;
+                   
+                    
+                 break;
+                }
 
-                case DROP_BRIDGE:
+                case DROP_BRIDGE: {
                     printf("Laying the bridge...\n");
                     
                    
@@ -294,34 +305,55 @@ int main()
                         printf("servo Max: %f\n", servo_Max);
                     }
                     else {
-                    robot_state = CROSS_BRIDGE;
+                        check_M1 = motor_M1.getRotation();
+                        check_M2 = motor_M2.getRotation();
+
+                        reverse_func(&motor_M1, &motor_M2, retract_arm);
+                        robot_state = CROSS_BRIDGE;
+                    
+                    }
+                    
+                        
+                    
+                    break;
+                }
+
+                case CROSS_BRIDGE: {
+                    printf("Crossing bridge\n");
+                    servo_Max = 0.9f;
+                    servo_D0.setNormalisedPulseWidth(servo_Max);
+                    
+                    float cross_speed = cruse_speed+0.35f;
+                    if ((fabsf(motor_M2.getRotation()-(check_M2+retract_arm))<global_threshold) && (fabsf(motor_M1.getRotation()-(check_M1-retract_arm))< global_threshold)){    
+                        
+                        accelerate_linear(&motor_M1, &motor_M2, bridge_length, cross_speed);
+                    }
+
+                    else {
+                        
+                    robot_state = PICKUP_BRIDGE;
                     }
                         
                     
                     break;
-
-                case CROSS_BRIDGE:
-                    printf("SLEEP\n");
-                    // if the measurement is within the min and max limits go to EXECUTION
-                    if ((ir_distance_cm  > ir_distance_min) && (ir_distance_cm < ir_distance_max)) {
-                        robot_state = PICKUP_BRIDGE;
-                    }
-                    break;
+                }
                 
-                 case PICKUP_BRIDGE:
+                 case PICKUP_BRIDGE:{
                     printf("SLEEP\n");
                     // if the measurement is within the min and max limits go to EXECUTION
                     if ((ir_distance_cm  > ir_distance_min) && (ir_distance_cm < ir_distance_max)) {
                         robot_state = EMERGENCY;
                     }
                     break;
+                 }
 
-                case EMERGENCY:
+                case EMERGENCY:{
                     printf("EMERGENCY\n");
                     // the transition to the emergency state causes the execution of the commands contained
                     // in the outer else statement scope, and since do_reset_all_once is true the system undergoes a reset
                     toggle_do_execute_main_fcn();
                     break;
+                }
                     
                 default:
                     break;
@@ -391,21 +423,14 @@ float ir_sensor_compensation(float ir_distance_mV)
 };
 
 //---> 90 degrees turn function
-int turn_90_degs( DCMotor* motor_M1, DCMotor* motor_M2, float revolutions){
-    float threshold = 0.001f;
+void turn_90_degs( DCMotor* motor_M1, DCMotor* motor_M2, float revolutions){
+    //float threshold = 1.05;
             
         // turn 90 degrees by moving one motor forward while moving the second backwards using relative funtion
         motor_M2->setRotationRelative(revolutions);
         motor_M1->setRotationRelative(-revolutions);
-        // check if 90 degree have been done while incrimenting the revolution of the motor, if done return 1
-        if ((2*motor_M2->getRotation()+threshold)>=(fabs(motor_M2->getRotation()-motor_M1->getRotation()))){
-
-            return 1;
-        }
-
-    
-
-    return 0;
+        
+    // return 0;
 
 };
 
@@ -427,8 +452,8 @@ void drop_bridge(){
 
 //---> retract fulk arm using reverse function
 void reverse_func(DCMotor* motor_M1, DCMotor* motor_M2, float revolution_per_task){
-        motor_M1->setRotationRelative(revolution_per_task);
-        motor_M2->setRotationRelative(revolution_per_task);
+        motor_M1->setRotationRelative(-revolution_per_task);
+        motor_M2->setRotationRelative(-revolution_per_task);
     
 };
 
